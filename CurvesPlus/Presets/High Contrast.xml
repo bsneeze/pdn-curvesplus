@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<CurvesPlusXMLFile xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <CurveMode>L</CurveMode>
+  <AdvancedCurveIn>A</AdvancedCurveIn>
+  <AdvancedCurveOut>A</AdvancedCurveOut>
+  <CurveDrawMode>Spline</CurveDrawMode>
+  <ControlPoints>
+    <Curve>
+      <Point X="0" Y="0" />
+      <Point X="97" Y="30" />
+      <Point X="170" Y="215" />
+      <Point X="255" Y="255" />
+    </Curve>
+  </ControlPoints>
+</CurvesPlusXMLFile>
