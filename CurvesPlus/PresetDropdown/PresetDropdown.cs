@@ -118,6 +118,8 @@ namespace pyrochild.effects.common
             string name;
             if (InputBox.Show(this, "Type a name for the new preset.", null, null, Path.GetInvalidFileNameChars(), InputBox.ValidationMode.Blacklist, out name) == DialogResult.OK)
             {
+                if (name == "") name = "Untitled Preset";
+
                 var path = Path.Combine(GetPresetDir(), Path.ChangeExtension(name, ".xml"));
                 if (!File.Exists(path)
                     || MessageBox.Show(
@@ -142,6 +144,10 @@ namespace pyrochild.effects.common
                         ResumeEvents();
                         current = preset;
                         SetPresetByName(name);
+                    }
+                    catch(Exception e)
+                    {
+                        MessageBox.Show(this, "Error saving preset:\n\n" + e.ToString(), "", MessageBoxButtons.OK, MessageBoxIcon.Error);
                     }
                     finally
                     {
