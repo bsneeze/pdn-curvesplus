@@ -9,7 +9,7 @@ using System.Xml.Serialization;
 
 namespace pyrochild.effects.common
 {
-    public sealed partial class PresetDropdown<T> : Control
+    public sealed class PresetDropdown<T> : Control
         where T : ICloneable
     {
         private FileSystemWatcher fsw;
@@ -46,11 +46,13 @@ namespace pyrochild.effects.common
                     }
                     Action action = delegate
                                     {
+                                        SuspendEvents();
                                         string name = CurrentName;
                                         T preset = current;
                                         PopulateDropdown();
                                         current = preset;
                                         SetPresetByName(name);
+                                        ResumeEvents();
                                     };
                     try
                     {
@@ -79,28 +81,17 @@ namespace pyrochild.effects.common
         private void PopulateDropdown()
         {
             SuspendEvents();
-            try
-            {
-                comboBox.Items.Clear();
-                comboBox.Items.Add(new PresetDropdownItem<T>("Default", defaultPreset));
-                comboBox.Items.Add(new PresetDropdownItem<T>("Custom", current));
-                comboBox.Items.Add(new PresetDropdownItem<T>());
-                comboBox.Items.AddRange(LoadPresets());
-                comboBox.Items.Add(new PresetDropdownItem<T>());
-                comboBox.Items.Add(new PresetDropdownItem<T>("Save current as preset...", SavePreset));
-                comboBox.Items.Add(new PresetDropdownItem<T>("Manage presets...", ManagePresets));
-                comboBox.SelectedIndex = 0;
-            }
-            catch(Exception e)
-            {
-                comboBox.Items.Clear();
-                comboBox.Items.Add(new PresetDropdownItem<T>(e.ToString(), () => { }));
-                comboBox.SelectedIndex = 0;
-                using (var g = Graphics.FromImage(new Bitmap(1, 1)))
-                {
-                    comboBox.DropDownWidth = (int)g.MeasureString(e.ToString(), Font).Width;
-                }
-            }
+            comboBox.SuspendLayout();
+            comboBox.Items.Clear();
+            comboBox.Items.Add(new PresetDropdownItem<T>("Default", defaultPreset));
+            comboBox.Items.Add(new PresetDropdownItem<T>("Custom", current));
+            comboBox.Items.Add(new PresetDropdownItem<T>());
+            comboBox.Items.AddRange(LoadPresets());
+            comboBox.Items.Add(new PresetDropdownItem<T>());
+            comboBox.Items.Add(new PresetDropdownItem<T>("Save current as preset...", SavePreset));
+            comboBox.Items.Add(new PresetDropdownItem<T>("Manage presets...", ManagePresets));
+            comboBox.SelectedIndex = 0;
+            comboBox.ResumeLayout();
             ResumeEvents();
         }
 
@@ -134,11 +125,11 @@ namespace pyrochild.effects.common
                     FileStream fs = null;
                     try
                     {
+                        SuspendEvents();
                         fs = new FileStream(path, FileMode.Create);
                         xmlSerializer.Serialize(fs, current);
                         fs.Close();
                         T preset = current;
-                        SuspendEvents();
                         PopulateDropdown();
                         ResumeEvents();
                         current = preset;
@@ -211,7 +202,6 @@ namespace pyrochild.effects.common
             }
 
             AppDomain.CurrentDomain.AssemblyResolve -= CurrentDomain_AssemblyResolve;
-
             return ret.ToArray();
         }
 
@@ -356,45 +346,47 @@ namespace pyrochild.effects.common
         }
 
         public void DefaultDrawItem(object sender, DrawItemEventArgs e)
-        {
-            var item = comboBox.Items[e.Index] as PresetDropdownItem<T>;
-            switch (drawMode)
+        {if (e.Index >= 0 && e.Index < comboBox.Items.Count)
             {
-                case DrawMode.Normal:
-                    switch (item.Type)
-                    {
-                        case PresetDropdownItem<T>.ItemType.Separator:
-                            float midy = (e.Bounds.Top + e.Bounds.Bottom) / 2f;
-                            e.Graphics.DrawLine(
-                                new Pen(SystemColors.Highlight),
-                                e.Bounds.Left + 5,
-                                midy,
-                                e.Bounds.Right - 5,
-                                midy);
-                            break;
+                var item = comboBox.Items[e.Index] as PresetDropdownItem<T>;
+                switch (drawMode)
+                {
+                    case DrawMode.Normal:
+                        switch (item.Type)
+                        {
+                            case PresetDropdownItem<T>.ItemType.Separator:
+                                float midy = (e.Bounds.Top + e.Bounds.Bottom) / 2f;
+                                e.Graphics.DrawLine(
+                                    new Pen(SystemColors.Highlight),
+                                    e.Bounds.Left + 5,
+                                    midy,
+                                    e.Bounds.Right - 5,
+                                    midy);
+                                break;
 
-                        default:
-                            e.DrawBackground();
-                            e.DrawFocusRectangle();
-                            e.Graphics.DrawString(
-                                item.Name,
-                                comboBox.Font,
-                                new SolidBrush(e.ForeColor),
-                                e.Bounds);
-                            break;
-                    }
-                    break;
-                case DrawMode.OwnerDrawFixed:
-                case DrawMode.OwnerDrawVariable:
-                    if (DrawItem != null)
-                    {
-                        DrawItem(sender, e);
-                    }
-                    else
-                    {
-                        goto case DrawMode.Normal;
-                    }
-                    break;
+                            default:
+                                e.DrawBackground();
+                                e.DrawFocusRectangle();
+                                e.Graphics.DrawString(
+                                    item.Name,
+                                    comboBox.Font,
+                                    new SolidBrush(e.ForeColor),
+                                    e.Bounds);
+                                break;
+                        }
+                        break;
+                    case DrawMode.OwnerDrawFixed:
+                    case DrawMode.OwnerDrawVariable:
+                        if (DrawItem != null)
+                        {
+                            DrawItem(sender, e);
+                        }
+                        else
+                        {
+                            goto case DrawMode.Normal;
+                        }
+                        break;
+                }
             }
         }
 
@@ -403,7 +395,6 @@ namespace pyrochild.effects.common
             try
             {
                 var retval = Path.Combine(Path.Combine(
-                            //Services.GetService<IAppInfoService>().UserDataDirectory,
                             Services.GetService<PaintDotNet.AppModel.IUserFilesService>().UserFilesPath,
                             "Effect Presets"),
                             OwnerName);
@@ -452,7 +443,6 @@ namespace pyrochild.effects.common
         {
             get
             {
-                //SwitchToCustom();
                 return current;
             }
             set
@@ -498,9 +488,23 @@ namespace pyrochild.effects.common
         }
 
         private int suspendcount = 0;
-        private bool EventsSuspended { get { return suspendcount > 0; } }
-        private void SuspendEvents() { suspendcount++; }
-        private void ResumeEvents() { suspendcount--; }
+        private bool EventsSuspended
+        {
+            get
+            {
+                return suspendcount > 0;
+            }
+        }
+
+        private void SuspendEvents()
+        {
+            suspendcount++;
+        }
+
+        private void ResumeEvents()
+        {
+            suspendcount--;
+        }
 
         private void SwitchToCustom()
         {
@@ -568,5 +572,45 @@ namespace pyrochild.effects.common
         {
             AddPreset(LoadPreset(stream), name);
         }
+
+        private void InitializeComponent()
+        {
+            this.comboBox = new ComboBox();
+            this.SuspendLayout();
+            // 
+            // comboBox1
+            // 
+            this.comboBox.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom)
+                        | System.Windows.Forms.AnchorStyles.Left)
+                        | System.Windows.Forms.AnchorStyles.Right)));
+            this.comboBox.DrawMode = System.Windows.Forms.DrawMode.OwnerDrawVariable;
+            this.comboBox.DropDownStyle = ComboBoxStyle.DropDownList;
+            this.comboBox.FormattingEnabled = true;
+            this.comboBox.Location = new System.Drawing.Point(0, 0);
+            this.comboBox.Margin = new System.Windows.Forms.Padding(0);
+            this.comboBox.Name = "comboBox1";
+            this.comboBox.Size = new System.Drawing.Size(100, 21);
+            this.comboBox.TabIndex = 0;
+            this.comboBox.DrawItem += new DrawItemEventHandler(DefaultDrawItem);
+            this.comboBox.MeasureItem += new MeasureItemEventHandler(DefaultMeasureItem);
+            this.comboBox.SelectedIndexChanged += new System.EventHandler(comboBox_SelectedIndexChanged);
+            this.comboBox.DropDownHeight = int.MaxValue;
+            // 
+            // PresetDropdown
+            // 
+            this.Controls.Add(this.comboBox);
+            this.Name = "PresetDropdown";
+            this.Size = new System.Drawing.Size(100, 21);
+            this.ResumeLayout(false);
+        }
+
+        protected override void OnSizeChanged(System.EventArgs e)
+        {
+            this.Height = this.comboBox.Height;
+
+            base.OnSizeChanged(e);
+        }
+
+        private System.Windows.Forms.ComboBox comboBox;
     }
 }
