@@ -1,3 +1,4 @@
+using PaintDotNet;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -5,7 +6,6 @@ using System.IO;
 using System.Reflection;
 using System.Windows.Forms;
 using System.Xml.Serialization;
-using PaintDotNet;
 
 namespace pyrochild.effects.common
 {
@@ -29,10 +29,8 @@ namespace pyrochild.effects.common
                 | ControlStyles.Selectable
                 | ControlStyles.ResizeRedraw,
                 true);
-
-            SuspendEvents();
+            
             PopulateDropdown();
-            ResumeEvents();
         }
 
         void fsw_Event(object sender, EventArgs e)
@@ -80,6 +78,7 @@ namespace pyrochild.effects.common
 
         private void PopulateDropdown()
         {
+            SuspendEvents();
             try
             {
                 comboBox.Items.Clear();
@@ -94,7 +93,6 @@ namespace pyrochild.effects.common
             }
             catch(Exception e)
             {
-                SuspendEvents();
                 comboBox.Items.Clear();
                 comboBox.Items.Add(new PresetDropdownItem<T>(e.ToString(), () => { }));
                 comboBox.SelectedIndex = 0;
@@ -103,6 +101,7 @@ namespace pyrochild.effects.common
                     comboBox.DropDownWidth = (int)g.MeasureString(e.ToString(), Font).Width;
                 }
             }
+            ResumeEvents();
         }
 
         public PresetDropdownItem<T> this[int index]
@@ -505,15 +504,12 @@ namespace pyrochild.effects.common
 
         private void SwitchToCustom()
         {
-            //if (!EventsSuspended)
+            SuspendEvents();
+            if (comboBox.Items.Count > 1)
             {
-                SuspendEvents();
-                if (comboBox.Items.Count > 1)
-                {
-                    comboBox.SelectedIndex = 1;
-                }
-                ResumeEvents();
+                comboBox.SelectedIndex = 1;
             }
+            ResumeEvents();
         }
 
         private DrawMode drawMode = DrawMode.Normal;
@@ -565,6 +561,7 @@ namespace pyrochild.effects.common
                 }
             }
             AppDomain.CurrentDomain.AssemblyResolve -= CurrentDomain_AssemblyResolve;
+
         }
 
         public void AddPreset(Stream stream, string name)
