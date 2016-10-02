@@ -498,14 +498,22 @@ namespace pyrochild.effects.curvesplus
             {
                 usedPencil = true;
             }
-            const float factor = .75f;
+
             for (int c = 0; c < channels; c++)
             {
                 for (int i = 1; i < controlPoints[c].Count - 1; i++)
                 {
-                    int flat = (int)FloatUtil.Lerp(controlPoints[c].Values[0], controlPoints[c].Values[controlPoints[c].Count - 1], controlPoints[c].Keys[i] / (float)entries);
+                    // the value the point would be at if the curve were just a straight line from the 2 end points
+                    float straight = FloatUtil.Lerp(controlPoints[c].Values[0], controlPoints[c].Values[controlPoints[c].Count - 1], controlPoints[c].Keys[i] / (float)(entries - 1));
+
                     int current = controlPoints[c].Values[i];
-                    controlPoints[c][controlPoints[c].Keys[i]] = (int)FloatUtil.Lerp(flat, current, factor);
+
+                    int newval = (int)(current + (straight - current) * .25f + .25f);
+
+                    if (newval == current)
+                        newval = (int)(0.5f + straight);
+
+                    controlPoints[c][controlPoints[c].Keys[i]] = newval;
                 }
             }
         }
