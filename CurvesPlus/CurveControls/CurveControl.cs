@@ -501,19 +501,22 @@ namespace pyrochild.effects.curvesplus
 
             for (int c = 0; c < channels; c++)
             {
-                for (int i = 1; i < controlPoints[c].Count - 1; i++)
+                if (mask[c]) // only selected channels should be modified
                 {
-                    // the value the point would be at if the curve were just a straight line from the 2 end points
-                    float straight = FloatUtil.Lerp(controlPoints[c].Values[0], controlPoints[c].Values[controlPoints[c].Count - 1], controlPoints[c].Keys[i] / (float)(entries - 1));
+                    for (int i = 1; i < controlPoints[c].Count - 1; i++)
+                    {
+                        // the value the point would be at if the curve were just a straight line from the 2 end points
+                        float straight = FloatUtil.Lerp(controlPoints[c].Values[0], controlPoints[c].Values[controlPoints[c].Count - 1], controlPoints[c].Keys[i] / (float)(entries - 1));
 
-                    int current = controlPoints[c].Values[i];
+                        int current = controlPoints[c].Values[i];
 
-                    int newval = (int)(current + (straight - current) * .25f + .25f);
+                        int newval = (int)(current + (straight - current) * .25f + .25f);
 
-                    if (newval == current)
-                        newval = (int)(0.5f + straight);
+                        if (newval == current)
+                            newval = (int)(0.5f + straight);
 
-                    controlPoints[c][controlPoints[c].Keys[i]] = newval;
+                        controlPoints[c][controlPoints[c].Keys[i]] = newval;
+                    }
                 }
             }
         }
