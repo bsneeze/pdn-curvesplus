@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using PaintDotNet;
+using PaintDotNet.Imaging;
 
 namespace pyrochild.effects.common
 {
@@ -14,16 +15,17 @@ namespace pyrochild.effects.common
             {
             }
 
-            protected override unsafe void AddSurfaceRectangleToHistogram(Surface surface, Rectangle rect)
+            protected override unsafe void AddRegionRectangleToHistogram(RegionPtr<ColorBgra32> region, Rectangle rect)
             {
                 long[] histogramC = histogram[0];
                 long[] histogramM = histogram[1];
                 long[] histogramY = histogram[2];
                 long[] histogramK = histogram[3];
+                RegionPtr<ColorBgra> regionBgra = region.Cast<ColorBgra>();
 
                 for (int y = rect.Top; y < rect.Bottom; ++y)
                 {
-                    ColorBgra* ptr = surface.GetPointAddressUnchecked(rect.Left, y);
+                    ColorBgra* ptr = regionBgra.Rows[y].Ptr + rect.Left;
                     for (int x = rect.Left; x < rect.Right; ++x)
                     {
                         byte C = (byte)(255 - ptr->R);

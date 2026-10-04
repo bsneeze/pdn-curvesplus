@@ -120,8 +120,6 @@ namespace pyrochild.effects.common
                         MessageBoxIcon.Question,
                         MessageBoxDefaultButton.Button2) == DialogResult.Yes)
                 {
-                    AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
-
                     FileStream fs = null;
                     try
                     {
@@ -146,21 +144,17 @@ namespace pyrochild.effects.common
                             fs.Dispose();
                         }
                     }
-
-                    AppDomain.CurrentDomain.AssemblyResolve -= CurrentDomain_AssemblyResolve;
                 }
             }
         }
 
         private void ManagePresets()
         {
-            Services.GetService<PaintDotNet.AppModel.IShellService>().LaunchFolder(this, GetPresetDir());
+            ((PaintDotNet.AppModel.IShellService)Services.GetService(typeof(PaintDotNet.AppModel.IShellService))).LaunchFolder(this, GetPresetDir());
         }
 
         private PresetDropdownItem<T>[] LoadPresets()
         {
-            AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
-
             var ret = new List<PresetDropdownItem<T>>();
             var dir = GetPresetDir();
             if (dir == null)
@@ -201,15 +195,12 @@ namespace pyrochild.effects.common
                 }
             }
 
-            AppDomain.CurrentDomain.AssemblyResolve -= CurrentDomain_AssemblyResolve;
             return ret.ToArray();
         }
 
         private T LoadPreset(Stream stream)
         {
-            AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
             var retval = (T)xmlSerializer.Deserialize(stream);
-            AppDomain.CurrentDomain.AssemblyResolve -= CurrentDomain_AssemblyResolve;
             return retval;
         }
 
@@ -395,7 +386,7 @@ namespace pyrochild.effects.common
             try
             {
                 var retval = Path.Combine(Path.Combine(
-                            Services.GetService<PaintDotNet.AppModel.IUserFilesService>().UserFilesPath,
+                            ((PaintDotNet.AppModel.IUserFilesService)Services.GetService(typeof(PaintDotNet.AppModel.IUserFilesService))).UserFilesPath,
                             "Effect Presets"),
                             OwnerName);
                 if (!Directory.Exists(retval))
@@ -406,28 +397,6 @@ namespace pyrochild.effects.common
             {
                 return null;
             }
-        }
-
-        private static Assembly CurrentDomain_AssemblyResolve(object sender, ResolveEventArgs args)
-        {
-            Assembly assembly = null;
-
-            //event subscribers get first dibs
-            if (AssemblyResolve != null)
-            {
-                assembly = AssemblyResolve(sender, args);
-                if (assembly != null) return assembly;
-            }
-
-            //then we try
-            try
-            {
-                assembly = Assembly.Load(args.Name);
-                if (assembly != null) return assembly;
-            }
-            catch { }
-
-            return Assembly.GetExecutingAssembly();
         }
 
         private IServiceProvider Services;
@@ -530,7 +499,6 @@ namespace pyrochild.effects.common
         public event PresetChangedEventHandler<T> PresetChanged;
         public event MeasureItemEventHandler MeasureItem;
         public event DrawItemEventHandler DrawItem;
-        public static event ResolveEventHandler AssemblyResolve;
 
         public void SetPresetByName(string name)
         {
@@ -549,7 +517,6 @@ namespace pyrochild.effects.common
 
         public void AddPreset(T preset, string name)
         {
-            AppDomain.CurrentDomain.AssemblyResolve += CurrentDomain_AssemblyResolve;
             var filename = Path.ChangeExtension(name, ".xml");
             var dir = GetPresetDir();
             if (dir != null)
@@ -564,8 +531,6 @@ namespace pyrochild.effects.common
                     PopulateDropdown();
                 }
             }
-            AppDomain.CurrentDomain.AssemblyResolve -= CurrentDomain_AssemblyResolve;
-
         }
 
         public void AddPreset(Stream stream, string name)

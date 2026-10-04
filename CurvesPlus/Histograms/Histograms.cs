@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using PaintDotNet;
+using PaintDotNet.Imaging;
 
 namespace pyrochild.effects.common
 {
@@ -91,29 +93,42 @@ namespace pyrochild.effects.common
                 histogram.Initialize();
             }
 
-            protected abstract void AddSurfaceRectangleToHistogram(Surface surface, Rectangle rect);
+            // region must be the whole document: rects/scans index region.Rows in document coordinates.
+            protected abstract void AddRegionRectangleToHistogram(RegionPtr<ColorBgra32> region, Rectangle rect);
 
-            public void UpdateHistogram(Surface surface)
+            public void UpdateHistogram(RegionPtr<ColorBgra32> region)
             {
                 Clear();
-                AddSurfaceRectangleToHistogram(surface, surface.Bounds);
+                AddRegionRectangleToHistogram(region, new Rectangle(0, 0, region.Width, region.Height));
                 OnHistogramUpdated();
             }
 
-            public void UpdateHistogram(Surface surface, Rectangle rect)
+            public void UpdateHistogram(RegionPtr<ColorBgra32> region, Rectangle rect)
             {
                 Clear();
-                AddSurfaceRectangleToHistogram(surface, rect);
+                AddRegionRectangleToHistogram(region, rect);
                 OnHistogramUpdated();
             }
 
-            public void UpdateHistogram(Surface surface, PdnRegion roi)
+            public void UpdateHistogram(RegionPtr<ColorBgra32> region, PdnRegion roi)
             {
                 Clear();
 
                 foreach (Rectangle rect in roi.GetRegionScansReadOnlyInt())
                 {
-                    AddSurfaceRectangleToHistogram(surface, rect);
+                    AddRegionRectangleToHistogram(region, rect);
+                }
+
+                OnHistogramUpdated();
+            }
+
+            public void UpdateHistogram(RegionPtr<ColorBgra32> region, IEnumerable<Rectangle> scans)
+            {
+                Clear();
+
+                foreach (Rectangle rect in scans)
+                {
+                    AddRegionRectangleToHistogram(region, rect);
                 }
 
                 OnHistogramUpdated();

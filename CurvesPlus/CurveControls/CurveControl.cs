@@ -5,7 +5,7 @@
 // See src/Resources/Files/License.txt for full licensing and attribution      //
 // details.                                                                    //
 // .                                                                           //
-// Modifications Copyright © 2007-2016 Zach Walker                             //
+// Modifications Copyright ï¿½ 2007-2016 Zach Walker                             //
 /////////////////////////////////////////////////////////////////////////////////
 
 using System;
@@ -168,10 +168,24 @@ namespace pyrochild.effects.curvesplus
             }
         }
 
+        protected float DpiScale
+        {
+            get { return this.DeviceDpi / 96f; }
+        }
+
         protected ColorBgra[] visualColors;
         public ColorBgra GetVisualColor(int channel)
         {
-            return visualColors[channel];
+            ColorBgra c = visualColors[channel];
+
+            // Near-black channel colors (luminosity, alpha, K, ...) vanish on a dark graph background.
+            bool darkBackground = (0.299 * BackColor.R + 0.587 * BackColor.G + 0.114 * BackColor.B) < 110;
+            if (darkBackground && Math.Max(c.R, Math.Max(c.G, c.B)) < 80)
+            {
+                return ColorBgra.FromBgra(ForeColor.B, ForeColor.G, ForeColor.R, c.A);
+            }
+
+            return c;
         }
 
         protected string[] channelNames;
@@ -362,7 +376,7 @@ namespace pyrochild.effects.curvesplus
                         for (int i = 0; i < line.Length; ++i)
                         {
                             line[i].X = (float)i * (width - 1) / (entries - 1);
-                            line[i].Y = (float)(DoubleUtil.Clamp(entries - 1 - interpolator.Interpolate(i), 0, entries - 1)) *
+                            line[i].Y = (float)(Math.Clamp(entries - 1 - interpolator.Interpolate(i), 0, entries - 1)) *
                                 (height - 1) / (entries - 1);
                         }
                         break;
@@ -396,9 +410,10 @@ namespace pyrochild.effects.curvesplus
                         float x = k * (width - 1) / (entries - 1);
                         float y = (entries - 1 - channelControlPoints.Values[i]) * (height - 1) / (entries - 1);
 
-                        const float radiusSelected = 4;
-                        const float radiusNotSelected = 3;
-                        const float radiusUnMasked = 2;
+                        float dpiScale = DpiScale;
+                        float radiusSelected = 4 * dpiScale;
+                        float radiusNotSelected = 3 * dpiScale;
+                        float radiusUnMasked = 2 * dpiScale;
 
                         bool selected = (mask[c] && pointsNearMousePerChannel[c] == i);
                         float size = selected ? radiusSelected : (mask[c] ? radiusNotSelected : radiusUnMasked);
@@ -442,8 +457,8 @@ namespace pyrochild.effects.curvesplus
             {
                 float width = this.ClientRectangle.Width;
                 float height = this.ClientRectangle.Height;
-                int mx = (int)FloatUtil.Clamp(0.5f + e.X * (entries - 1) / (width - 1), 0, Entries - 1);
-                int my = (int)FloatUtil.Clamp(0.5f + Entries - 1 - e.Y * (entries - 1) / (height - 1), 0, Entries - 1);
+                int mx = (int)Math.Clamp(0.5f + e.X * (entries - 1) / (width - 1), 0, Entries - 1);
+                int my = (int)Math.Clamp(0.5f + Entries - 1 - e.Y * (entries - 1) / (height - 1), 0, Entries - 1);
 
                 ptSave = new Point[channels];
                 for (int i = 0; i < channels; ++i)
@@ -705,8 +720,8 @@ namespace pyrochild.effects.curvesplus
             lastMouseXY = new Point(e.X, e.Y);
             float width = this.ClientRectangle.Width;
             float height = this.ClientRectangle.Height;
-            int mx = (int)FloatUtil.Clamp(0.5f + e.X * (entries - 1) / (width - 1), 0, Entries - 1);
-            int my = (int)FloatUtil.Clamp(0.5f + Entries - 1 - e.Y * (entries - 1) / (height - 1), 0, Entries - 1);
+            int mx = (int)Math.Clamp(0.5f + e.X * (entries - 1) / (width - 1), 0, Entries - 1);
+            int my = (int)Math.Clamp(0.5f + Entries - 1 - e.Y * (entries - 1) / (height - 1), 0, Entries - 1);
 
             Invalidate();
 
@@ -745,7 +760,7 @@ namespace pyrochild.effects.curvesplus
 
                                 if (mx >= 0 && mx < Entries)
                                 {
-                                    int newValue = my.Clamp(0, Entries - 1);
+                                    int newValue = Math.Clamp(my, 0, Entries - 1);
                                     int oldIndex = channelControlPoints.IndexOfKey(mx);
                                     int oldValue = (oldIndex >= 0) ? channelControlPoints.Values[oldIndex] : -1;
 

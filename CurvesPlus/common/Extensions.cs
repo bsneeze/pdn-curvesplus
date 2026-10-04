@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Text;
 using PaintDotNet;
+using PaintDotNet.Imaging;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -17,12 +18,24 @@ namespace pyrochild.effects.common
             return Color.FromArgb(255, color);
         }
 
+        public static ColorBgra ToColorBgra(this ColorHsv96Float color)
+        {
+            ColorRgb96Float rgb = color.ToRgb();
+            return ColorBgra.FromBgraClamped(rgb.B * 255f, rgb.G * 255f, rgb.R * 255f, 255f);
+        }
+
+        public static ColorHsv96Float ToHsvColor(this ColorBgra color)
+        {
+            ColorRgb96Float rgb = new ColorRgb96Float(color.R / 255f, color.G / 255f, color.B / 255f);
+            return rgb.ToHsv();
+        }
+
         unsafe public static void Checker(this Surface surface)
         {
             int xOffset = 0, yOffset = 0;
             for (int y = 0; y < surface.Height; y++)
             {
-                ColorBgra* dstPtr = surface.GetRowAddressUnchecked(y);
+                ColorBgra* dstPtr = surface.GetRowPointerUnchecked(y);
                 for (int x = 0; x < surface.Width; x++)
                 {
                     byte v = (byte)(((((x + xOffset) ^ (y + yOffset)) & 8) * 8) + 0xbf);
