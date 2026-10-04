@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using PaintDotNet;
+using PaintDotNet.Imaging;
+using PaintDotNet.Rendering;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 
@@ -11,6 +13,18 @@ namespace pyrochild.effects.common
     public abstract class UnaryPixelHistogramOp : UnaryPixelOp
     {
         public abstract long[][] Apply(long[][] histogram);
+
+        public unsafe void Apply(RegionPtr<ColorBgra32> dst, RegionPtr<ColorBgra32> src, RectInt32 tileBounds)
+        {
+            RegionPtr<ColorBgra> dstBgra = dst.Cast<ColorBgra>();
+            RegionPtr<ColorBgra> srcBgra = src.Cast<ColorBgra>();
+
+            for (int y = 0; y < dstBgra.Height; ++y)
+            {
+                ColorBgra* srcRow = srcBgra.Rows[tileBounds.Y + y].Ptr + tileBounds.X;
+                this.Apply(dstBgra.Rows[y].Ptr, srcRow, dstBgra.Width);
+            }
+        }
     }
 
     public sealed class UnaryPixelHistogramOps
@@ -500,7 +514,7 @@ namespace pyrochild.effects.common
                             color.A);
 
                     case Channel.C:
-                        i = (byte)(i + Math.Min(Math.Min(255 - color.R, 255 - color.G), 255 - color.B)).Clamp(0,255);
+                        i = Math.Clamp(i + Math.Min(Math.Min(255 - color.R, 255 - color.G), 255 - color.B), 0, 255);
                         return ColorBgra.FromBgra(
                             color.B,
                             color.G,
@@ -508,7 +522,7 @@ namespace pyrochild.effects.common
                             color.A);
 
                     case Channel.M:
-                        i = (byte)(i + Math.Min(Math.Min(255 - color.R, 255 - color.G), 255 - color.B)).Clamp(0,255);
+                        i = Math.Clamp(i + Math.Min(Math.Min(255 - color.R, 255 - color.G), 255 - color.B), 0, 255);
                         return ColorBgra.FromBgra(
                             color.B,
                             (byte)(255 - i),
@@ -516,7 +530,7 @@ namespace pyrochild.effects.common
                             color.A);
 
                     case Channel.Y:
-                        i = (byte)(i + Math.Min(Math.Min(255 - color.R, 255 - color.G), 255 - color.B)).Clamp(0,255);
+                        i = Math.Clamp(i + Math.Min(Math.Min(255 - color.R, 255 - color.G), 255 - color.B), 0, 255);
                         return ColorBgra.FromBgra(
                             (byte)(255 - i),
                             color.G,
@@ -1086,14 +1100,14 @@ namespace pyrochild.effects.common
                         retval.B = (byte)(z_3[color.B]);
                         break;
                     case ChannelMode.Hsv:
-                        HsvColor hsv = HsvColor.FromColor(color.ToColor());
-                        int H = hsv.Hue;
-                        int S = hsv.Saturation;
-                        int V = hsv.Value;
+                        ColorHsv96Float hsv = color.ToHsvColor();
+                        int H = (int)Math.Round(hsv.Hue);
+                        int S = (int)Math.Round(hsv.Saturation);
+                        int V = (int)Math.Round(hsv.Value);
                         hsv.Hue = z_1[(H)];
                         hsv.Saturation = z_2[S];
                         hsv.Value = z_3[V];
-                        retval = ColorBgra.FromColor(hsv.ToColor());
+                        retval = hsv.ToColorBgra();
                         break;
                     case ChannelMode.L:
                         ColorPlus cp = new ColorPlus(color);

@@ -1,6 +1,7 @@
 using System;
 using System.Drawing;
 using PaintDotNet;
+using PaintDotNet.Imaging;
 using pyrochild.effects.common;
 
 namespace pyrochild.effects.common
@@ -18,25 +19,26 @@ namespace pyrochild.effects.common
 
             //private bool skipzerosat;
 
-            protected override unsafe void AddSurfaceRectangleToHistogram(Surface surface, Rectangle rect)
+            protected override unsafe void AddRegionRectangleToHistogram(RegionPtr<ColorBgra32> region, Rectangle rect)
             {
                 long[] histogramH = histogram[0];
                 long[] histogramS = histogram[1];
                 long[] histogramV = histogram[2];
+                RegionPtr<ColorBgra> regionBgra = region.Cast<ColorBgra>();
 
                 for (int y = rect.Top; y < rect.Bottom; ++y)
                 {
-                    ColorBgra* ptr = surface.GetPointAddressUnchecked(rect.Left, y);
+                    ColorBgra* ptr = regionBgra.Rows[y].Ptr + rect.Left;
                     for (int x = rect.Left; x < rect.Right; ++x)
                     {
-                        HsvColor hsvColor = HsvColor.FromColor(ptr->ToColor());
+                        ColorHsv96Float hsvColor = (*ptr).ToHsvColor();
 
                         //if (!skipzerosat && hsvColor.Saturation > 0)
                         {
-                            ++histogramH[hsvColor.Hue];
+                            ++histogramH[(int)Math.Round(hsvColor.Hue)];
                         }
-                        ++histogramS[hsvColor.Saturation];
-                        ++histogramV[hsvColor.Value];
+                        ++histogramS[(int)Math.Round(hsvColor.Saturation)];
+                        ++histogramV[(int)Math.Round(hsvColor.Value)];
                         ++ptr;
                     }
                 }

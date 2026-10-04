@@ -10,7 +10,7 @@ using System.Diagnostics;
 
 namespace pyrochild.effects.common
 {
-    internal partial class InputBoxForm : Form
+    internal partial class InputBoxForm : PaintDotNet.PdnBaseForm
     {
         Size lbltextoriginalsize;
         Size pnlwhiteoroginalsize;
@@ -19,6 +19,7 @@ namespace pyrochild.effects.common
         public InputBoxForm(string text, string defaultvalue, string caption, char[] validationchars, InputBox.ValidationMode validationmode)
         {
             InitializeComponent();
+            this.Load += (themeSender, themeArgs) => pyrochild.effects.common.ThemeHelper.ApplyToChildForm(this);
             this.pnlWhite.Resize += new System.EventHandler(this.pnlWhite_Resize);
             this.txtOut.KeyPress += new KeyPressEventHandler(txtOut_KeyPress);
             this.lblText.Resize += new System.EventHandler(this.lblText_Resize);

@@ -5,25 +5,28 @@
 // See src/Resources/Files/License.txt for full licensing and attribution      //
 // details.                                                                    //
 // .                                                                           //
-// Modifications Copyright © 2007-2016 Zach Walker                             //
+// Modifications Copyright ï¿½ 2007-2016 Zach Walker                             //
 /////////////////////////////////////////////////////////////////////////////////
 
 using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Resources;
 using System.Windows.Forms;
 using System.Xml.Serialization;
 using PaintDotNet;
 using PaintDotNet.Effects;
+using PaintDotNet.Imaging;
+using PaintDotNet.Rendering;
 using pyrochild.effects.common;
 
 namespace pyrochild.effects.curvesplus
 {
     public sealed class ConfigDialog
-        : EffectConfigDialog
+        : EffectConfigForm<CurvesPlus, ConfigToken>
     {
         private CurveControl curveControl;
         private Dictionary<ChannelMode, CurveControl> curveControls;
@@ -51,16 +54,84 @@ namespace pyrochild.effects.curvesplus
         private PresetDropdown<CurvesPlusXMLFile> presetDropdown;
         private long[][] histogram;
 
+        // The image doesn't change while the dialog is open, so each mode's histogram is only
+        // computed the first time that mode is shown.
+        private readonly HashSet<CurveControl> histogramComputed = new HashSet<CurveControl>();
+
+        private Panel curveHost;
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+        private const int WM_SETREDRAW = 0x000B;
+
+        // Stops the form repainting while controls are swapped, so the rebuild shows up in one go
+        // instead of as controls appearing, getting styled and moving into place.
+        private void SetRedraw(bool enabled)
+        {
+            if (IsHandleCreated)
+            {
+                SendMessage(Handle, WM_SETREDRAW, enabled ? (IntPtr)1 : IntPtr.Zero, IntPtr.Zero);
+                if (enabled)
+                {
+                    Invalidate(true);
+                }
+            }
+        }
+
+        private float DpiScale
+        {
+            get { return this.DeviceDpi / 96f; }
+        }
+
+        private bool darkIconsApplied;
+
+        private void ApplyTheme()
+        {
+            ThemeHelper.Apply(this);
+
+            if (ThemeHelper.IsDarkMode)
+            {
+                if (!darkIconsApplied)
+                {
+                    darkIconsApplied = true;
+                    foreach (RadioButton option in new RadioButton[] { optLine, optSpline })
+                    {
+                        if (option.Image != null)
+                        {
+                            option.Image = ThemeHelper.Inverted(option.Image);
+                        }
+                    }
+                }
+
+                ApplyCurveControlTheme();
+                UpdateCheckboxEnables();
+            }
+        }
+
+        // The curve graph is self-drawn from its own BackColor/ForeColor (white/black by default).
+        private void ApplyCurveControlTheme()
+        {
+            if (curveControl != null && ThemeHelper.IsDarkMode)
+            {
+                curveControl.BackColor = ThemeHelper.FieldBackColor;
+                curveControl.ForeColor = ThemeHelper.LightTextColor;
+                curveControl.Invalidate();
+            }
+        }
+
         public ConfigDialog()
         {
             InitializeComponent();
+            this.Load += (themeSender, themeArgs) => ApplyTheme();
+            this.Shown += (themeSender, themeArgs) => ApplyTheme();
 
             curveControlValueChangedDelegate = this.curveControl_ValueChanged;
             curveControlCoordinatesChangedDelegate = this.curveControl_CoordinatesChanged;
 
-            optLine.Image = new Bitmap(typeof(CurvesPlus), "images.line.png");
-            optSpline.Image = new Bitmap(typeof(CurvesPlus), "images.spline.png");
-            optDraw.Image = new Bitmap(typeof(CurvesPlus), "images.pencil.png");
+            float dpiScale = DpiScale;
+            optLine.Image = LoadIcon(typeof(CurvesPlus), "images.line.png", dpiScale);
+            optSpline.Image = LoadIcon(typeof(CurvesPlus), "images.spline.png", dpiScale);
+            optDraw.Image = LoadIcon(typeof(CurvesPlus), "images.pencil.png", dpiScale);
 
             this.Text = CurvesPlus.StaticDialogName;
             this.cancelButton.Text = "Cancel";
@@ -83,6 +154,60 @@ namespace pyrochild.effects.curvesplus
             this.curveControls.Add(ChannelMode.Hsv, new CurveControlHsv());
         }
 
+        private static Bitmap LoadIcon(Type resourceType, string resourceName, float dpiScale)
+        {
+            Bitmap original = new Bitmap(resourceType, resourceName);
+
+            if (dpiScale <= 1.01f)
+            {
+                return original;
+            }
+
+            int width = Math.Max(1, (int)Math.Round(original.Width * dpiScale));
+            int height = Math.Max(1, (int)Math.Round(original.Height * dpiScale));
+
+            Bitmap scaled = new Bitmap(width, height);
+            using (Graphics g = Graphics.FromImage(scaled))
+            {
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.HighQuality;
+                g.DrawImage(original, 0, 0, width, height);
+            }
+            original.Dispose();
+
+            return scaled;
+        }
+
+        // Kept locked for the dialog's lifetime (released in OnDispose); histograms read it directly.
+        private IEffectInputBitmap<ColorBgra32> sourceBitmap;
+        private IBitmapLock<ColorBgra32> sourceLock;
+        private RegionPtr<ColorBgra32> sourceRegion;
+
+        private unsafe RegionPtr<ColorBgra32> GetSourceRegion()
+        {
+            if (sourceBitmap == null)
+            {
+                // Assign the cached fields only once everything succeeded, so a failed Lock() is retried later.
+                IEffectInputBitmap<ColorBgra32> bitmap = Environment.GetSourceBitmapBgra32();
+                try
+                {
+                    SizeInt32 docSize = Environment.Document.Size;
+                    IBitmapLock<ColorBgra32> bitmapLock = bitmap.Lock(new RectInt32(0, 0, docSize.Width, docSize.Height));
+                    sourceRegion = new RegionPtr<ColorBgra32>(bitmapLock.Buffer, bitmapLock.Size, bitmapLock.BufferStride);
+                    sourceLock = bitmapLock;
+                }
+                catch
+                {
+                    bitmap.Dispose();
+                    throw;
+                }
+
+                sourceBitmap = bitmap;
+            }
+
+            return sourceRegion;
+        }
+
         private void AddDefaultPresets()
         {
            // presetDropdown.SuspendEvents();
@@ -103,8 +228,8 @@ namespace pyrochild.effects.curvesplus
         void presetDropdown_PresetChanged(object sender, PresetChangedEventArgs<CurvesPlusXMLFile> e)
         {
             if (!TokenUpdatesSuspended)
-                InitDialogFromToken(e.Preset.ToConfigToken());
-            FinishTokenUpdate();
+                OnUpdateDialogFromToken(e.Preset.ToConfigToken());
+            UpdateTokenFromDialog();
             curveControl.Invalidate();
         }
 
@@ -126,18 +251,17 @@ namespace pyrochild.effects.curvesplus
             return xao;
         }
 
-        protected override void InitialInitToken()
+        protected override EffectConfigToken OnCreateInitialToken()
         {
-            theEffectToken = new ConfigToken();
+            return new ConfigToken();
         }
 
-        protected override void InitTokenFromDialog()
+        protected override void OnUpdateTokenFromDialog(ConfigToken token)
         {
             if (!TokenUpdatesSuspended)
             {
-                lock (EffectToken)
+                lock (token)
                 {
-                    ConfigToken token = EffectToken as ConfigToken;
                     token.ColorTransferMode = curveControl.ColorTransferMode;
                     token.ControlPoints = new SortedList<int, int>[curveControl.ControlPoints.Length];
 
@@ -161,10 +285,9 @@ namespace pyrochild.effects.curvesplus
         private void ResumeTokenUpdates() { tokenUpdateSuspendCount--; }
         private bool TokenUpdatesSuspended { get { return tokenUpdateSuspendCount > 0; } }
 
-        protected override void InitDialogFromToken(EffectConfigToken effectToken)
+        protected override void OnUpdateDialogFromToken(ConfigToken token)
         {
             SuspendTokenUpdates();
-            ConfigToken token = (ConfigToken)effectToken;
 
             InputMode = token.InputMode;
             OutputMode = token.OutputMode;
@@ -212,7 +335,7 @@ namespace pyrochild.effects.curvesplus
         /// <summary>
         /// Clean up any resources being used.
         /// </summary>
-        protected override void Dispose(bool disposing)
+        protected override void OnDispose(bool disposing)
         {
             if (disposing)
             {
@@ -221,9 +344,14 @@ namespace pyrochild.effects.curvesplus
                     components.Dispose();
                     components = null;
                 }
+
+                sourceLock?.Dispose();
+                sourceLock = null;
+                sourceBitmap?.Dispose();
+                sourceBitmap = null;
             }
 
-            base.Dispose(disposing);
+            base.OnDispose(disposing);
         }
 
         #region Designer generated code
@@ -308,7 +436,7 @@ namespace pyrochild.effects.curvesplus
             this.tableLayoutMain.Name = "tableLayoutMain";
             this.tableLayoutMain.RowCount = 6;
             this.tableLayoutMain.RowStyles.Add(new System.Windows.Forms.RowStyle());
-            this.tableLayoutMain.RowStyles.Add(new System.Windows.Forms.RowStyle());
+            this.tableLayoutMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 27F));
             this.tableLayoutMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
             this.tableLayoutMain.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 30F));
             this.tableLayoutMain.RowStyles.Add(new System.Windows.Forms.RowStyle());
@@ -360,10 +488,10 @@ namespace pyrochild.effects.curvesplus
             this.tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 22F));
             this.tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 6F));
             this.tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 22F));
+            this.tableLayoutPanel1.Anchor = System.Windows.Forms.AnchorStyles.Top;
             this.tableLayoutPanel1.Controls.Add(this.optSpline, 0, 0);
             this.tableLayoutPanel1.Controls.Add(this.optDraw, 3, 0);
             this.tableLayoutPanel1.Controls.Add(this.optLine, 1, 0);
-            this.tableLayoutPanel1.Dock = System.Windows.Forms.DockStyle.Fill;
             this.tableLayoutPanel1.Location = new System.Drawing.Point(115, 24);
             this.tableLayoutPanel1.Margin = new System.Windows.Forms.Padding(1);
             this.tableLayoutPanel1.Name = "tableLayoutPanel1";
@@ -374,8 +502,8 @@ namespace pyrochild.effects.curvesplus
             // 
             // optSpline
             // 
+            this.optSpline.Anchor = System.Windows.Forms.AnchorStyles.None;
             this.optSpline.Appearance = System.Windows.Forms.Appearance.Button;
-            this.optSpline.Dock = System.Windows.Forms.DockStyle.Fill;
             this.optSpline.FlatAppearance.BorderColor = System.Drawing.Color.Black;
             this.optSpline.FlatAppearance.CheckedBackColor = System.Drawing.SystemColors.Highlight;
             this.optSpline.FlatAppearance.MouseDownBackColor = System.Drawing.SystemColors.HotTrack;
@@ -392,8 +520,8 @@ namespace pyrochild.effects.curvesplus
             // 
             // optDraw
             // 
+            this.optDraw.Anchor = System.Windows.Forms.AnchorStyles.None;
             this.optDraw.Appearance = System.Windows.Forms.Appearance.Button;
-            this.optDraw.Dock = System.Windows.Forms.DockStyle.Fill;
             this.optDraw.FlatAppearance.BorderColor = System.Drawing.Color.Black;
             this.optDraw.FlatAppearance.CheckedBackColor = System.Drawing.SystemColors.Highlight;
             this.optDraw.FlatAppearance.MouseDownBackColor = System.Drawing.SystemColors.HotTrack;
@@ -409,8 +537,8 @@ namespace pyrochild.effects.curvesplus
             // 
             // optLine
             // 
+            this.optLine.Anchor = System.Windows.Forms.AnchorStyles.None;
             this.optLine.Appearance = System.Windows.Forms.Appearance.Button;
-            this.optLine.Dock = System.Windows.Forms.DockStyle.Fill;
             this.optLine.FlatAppearance.BorderColor = System.Drawing.Color.Black;
             this.optLine.FlatAppearance.CheckedBackColor = System.Drawing.SystemColors.Highlight;
             this.optLine.FlatAppearance.MouseDownBackColor = System.Drawing.SystemColors.HotTrack;
@@ -429,9 +557,11 @@ namespace pyrochild.effects.curvesplus
             // 
             this.AcceptButton = this.okButton;
             this.AutoScaleDimensions = new System.Drawing.SizeF(96F, 96F);
+            this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Dpi;
             this.CancelButton = this.cancelButton;
             this.ClientSize = new System.Drawing.Size(274, 412);
             this.Controls.Add(this.tableLayoutMain);
+            this.Font = new System.Drawing.Font("Microsoft Sans Serif", 8.25F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
             this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.Sizable;
             this.MinimumSize = new System.Drawing.Size(290, 448);
             this.Name = "ConfigDialog";
@@ -457,9 +587,9 @@ namespace pyrochild.effects.curvesplus
             control.FlatAppearance.BorderSize = 1;
         }
 
-        protected override void OnLoad(EventArgs e)
+        protected override void OnLoading()
         {
-            presetDropdown = new PresetDropdown<CurvesPlusXMLFile>(Services, Path.GetFileNameWithoutExtension(GetType().Assembly.CodeBase), CurvesPlusXMLFile.CreateDefault(), GetXao());
+            presetDropdown = new PresetDropdown<CurvesPlusXMLFile>(Services, Path.GetFileNameWithoutExtension(GetType().Assembly.Location), CurvesPlusXMLFile.CreateDefault(), GetXao());
 
             this.tableLayoutMain.SetColumnSpan(this.presetDropdown, 4);
             this.presetDropdown.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -473,8 +603,10 @@ namespace pyrochild.effects.curvesplus
             this.presetDropdown.PresetChanged += presetDropdown_PresetChanged;
             this.tableLayoutMain.Controls.Add(this.presetDropdown, 0, 0);
 
+            GetSourceRegion();
+
             this.okButton.Select();
-            base.OnLoad(e);
+            base.OnLoading();
         }
 
         private void okButton_Click(object sender, System.EventArgs e)
@@ -490,8 +622,8 @@ namespace pyrochild.effects.curvesplus
 
         private void curveControl_ValueChanged(object sender, EventArgs e)
         {
-            this.FinishTokenUpdate();
-            this.presetDropdown.Current = CurvesPlusXMLFile.FromConfigToken((ConfigToken)EffectToken);
+            this.UpdateTokenFromDialog();
+            this.presetDropdown.Current = CurvesPlusXMLFile.FromConfigToken(Token);
         }
 
         private void curveControl_CoordinatesChanged(object sender, EventArgs<Point> e)
@@ -519,7 +651,7 @@ namespace pyrochild.effects.curvesplus
         private void resetButton_Click(object sender, System.EventArgs e)
         {
             curveControl.ResetControlPoints();
-            this.FinishTokenUpdate();
+            this.UpdateTokenFromDialog();
         }
 
         private void MaskCheckChanged(object sender, System.EventArgs e)
@@ -555,42 +687,109 @@ namespace pyrochild.effects.curvesplus
 
             if (curveControl != newCurveControl)
             {
-                tableLayoutMain.Controls.Remove(curveControl);
+                SetRedraw(false);
+                tableLayoutMain.SuspendLayout();
+                tableLayoutPanelMask.SuspendLayout();
+                try
+                {
+                    SwitchCurveControl(newCurveControl, colorTransferMode);
+                }
+                finally
+                {
+                    tableLayoutPanelMask.ResumeLayout(true);
+                    tableLayoutMain.ResumeLayout(true);
+                    SetRedraw(true);
+                }
+            }
+        }
+
+        private void SwitchCurveControl(CurveControl newCurveControl, ChannelMode colorTransferMode)
+        {
+            {
+                // Every mode's graph lives in one holder and is only shown or hidden. Removing a
+                // control and adding it back makes WinForms DPI-scale its margins again each time,
+                // which shrank the graph on every revisit.
+                if (curveHost == null)
+                {
+                    curveHost = new Panel { Dock = DockStyle.Fill };
+                    tableLayoutMain.Controls.Add(curveHost, 0, 2);
+                    tableLayoutMain.SetColumnSpan(curveHost, 4);
+                }
 
                 //reset the histogram before switching out the control
                 if (curveControl != null && curveControl.Histogram != null)
                 {
                     curveControl.Histogram.HistogramValues = histogram;
                 }
+                if (curveControl != null)
+                {
+                    curveControl.Visible = false;
+                }
 
                 curveControl = newCurveControl;
 
-                curveControl.Bounds = new Rectangle(0, 0, 258, 258);
-                curveControl.BackColor = Color.White;
-                tableLayoutMain.SetColumnSpan(this.curveControl, 4);
-                curveControl.Dock = System.Windows.Forms.DockStyle.Fill;
-                curveControl.ValueChanged += curveControlValueChangedDelegate;
-                curveControl.CoordinatesChanged += curveControlCoordinatesChangedDelegate;
+                bool firstShow = curveControl.Parent != curveHost;
+                if (firstShow)
+                {
+                    curveControl.Bounds = new Rectangle(0, 0, 258, 258);
+                    curveControl.BackColor = Color.White;
+                    curveControl.ForeColor = Color.Black;
+                    curveControl.Dock = System.Windows.Forms.DockStyle.Fill;
+                    curveControl.ValueChanged += curveControlValueChangedDelegate;
+                    curveControl.CoordinatesChanged += curveControlCoordinatesChangedDelegate;
+                }
+                ApplyCurveControlTheme();
                 curveControl.CurveDrawMode = CurveDrawMode;
 
-                if (curveControl.Histogram != null)
+                if (curveControl.Histogram != null && histogramComputed.Contains(curveControl))
                 {
-                    curveControl.Histogram.UpdateHistogram(EffectSourceSurface, Selection);
+                    histogram = curveControl.Histogram.HistogramValues;
+                }
+                else if (curveControl.Histogram != null)
+                {
+                    histogramComputed.Add(curveControl);
+                    // Not guarded like the Selection access below: curveControl is already reassigned, so a
+                    // swallowed failure here would leave the histogram stuck at zeros.
+                    RegionPtr<ColorBgra32> region = GetSourceRegion();
+
+                    IEnumerable<Rectangle> scans;
+                    try
+                    {
+                        scans = Environment.Selection.RenderScans.Select(r => new Rectangle(r.X, r.Y, r.Width, r.Height));
+                    }
+                    catch (NotInitializedException)
+                    {
+                        // Selection may not be available yet (dialog primed from a saved token); use the whole canvas.
+                        scans = new[] { new Rectangle(0, 0, region.Width, region.Height) };
+                    }
+
+                    curveControl.Histogram.UpdateHistogram(region, scans);
                     histogram = curveControl.Histogram.HistogramValues;
                 }
 
-                tableLayoutMain.Controls.Add(curveControl, 0, 2);
+                if (firstShow)
+                {
+                    curveHost.Controls.Add(curveControl);
+                }
+                curveControl.Visible = true;
 
                 if(!TokenUpdatesSuspended)
                 {
-                    FinishTokenUpdate();
+                    UpdateTokenFromDialog();
                 }
 
                 int channels = newCurveControl.Channels;
 
                 maskCheckBoxes = new CheckBox[channels];
 
+                Control[] oldControls = new Control[this.tableLayoutPanelMask.Controls.Count];
+                this.tableLayoutPanelMask.Controls.CopyTo(oldControls, 0);
                 this.tableLayoutPanelMask.Controls.Clear();
+                foreach (Control old in oldControls)
+                {
+                    old.Dispose();
+                }
+
                 switch (colorTransferMode)
                 {
                     case ChannelMode.Advanced:
@@ -599,16 +798,19 @@ namespace pyrochild.effects.curvesplus
                         Label l1 = new Label();
                         Label l2 = new Label();
                         comboInputMode.DropDownStyle = comboOutputMode.DropDownStyle = ComboBoxStyle.DropDownList;
-                        comboInputMode.SelectedIndexChanged += new EventHandler(comboInputMode_SelectedIndexChanged);
-                        comboOutputMode.SelectedIndexChanged += new EventHandler(comboOutputMode_SelectedIndexChanged);
-                        comboInputMode.Dock = comboOutputMode.Dock = DockStyle.Fill;
                         modes[0] = comboInputMode;
                         modes[1] = comboOutputMode;
                         l1.Text = "In:";
                         l2.Text = "Out:";
                         l1.AutoSize = l2.AutoSize = true;
-                        l1.Dock = l2.Dock = DockStyle.Fill;
+                        // Anchored left and right but not top or bottom: centered vertically in the
+                        // row, so the labels line up with the boxes' text.
+                        l1.Anchor = l2.Anchor = AnchorStyles.Left | AnchorStyles.Right;
                         l1.TextAlign = l2.TextAlign = ContentAlignment.MiddleRight;
+                        comboInputMode.Anchor = comboOutputMode.Anchor = AnchorStyles.Left | AnchorStyles.Right;
+                        // The panel sizes itself to its contents, which would shrink the half-width
+                        // boxes to nothing, so here it spans the dialog instead.
+                        tableLayoutPanelMask.Dock = DockStyle.Fill;
                         tableLayoutPanelMask.ColumnCount = 4;
                         tableLayoutPanelMask.ColumnStyles[0].SizeType = SizeType.AutoSize;
                         tableLayoutPanelMask.ColumnStyles[1].SizeType = SizeType.Percent;
@@ -621,14 +823,26 @@ namespace pyrochild.effects.curvesplus
                             comboInputMode.Items.Add(rm.GetString(s));
                             comboOutputMode.Items.Add(rm.GetString(s));
                         }
+
+                        // Styled before they're shown: switching a combo to owner-draw once it has a
+                        // window recreates it, which loses the selection.
+                        foreach (Control c in new Control[] { l1, comboInputMode, l2, comboOutputMode })
+                        {
+                            ThemeHelper.Restyle(c);
+                        }
                         comboInputMode.SelectedItem = rm.GetString(InputMode.ToString());
                         comboOutputMode.SelectedItem = rm.GetString(OutputMode.ToString());
+                        comboInputMode.SelectedIndexChanged += new EventHandler(comboInputMode_SelectedIndexChanged);
+                        comboOutputMode.SelectedIndexChanged += new EventHandler(comboOutputMode_SelectedIndexChanged);
                         tableLayoutPanelMask.Controls.Add(l1, 0, 0);
                         tableLayoutPanelMask.Controls.Add(comboInputMode, 1, 0);
                         tableLayoutPanelMask.Controls.Add(l2, 2, 0);
                         tableLayoutPanelMask.Controls.Add(comboOutputMode, 3, 0);
+                        FitListToItems(comboInputMode);
+                        FitListToItems(comboOutputMode);
                         break;
                     default:
+                        this.tableLayoutPanelMask.Dock = DockStyle.None;
                         this.tableLayoutPanelMask.ColumnCount = channels;
                         for (int i = 0; i < channels; ++i)
                         {
@@ -648,7 +862,24 @@ namespace pyrochild.effects.curvesplus
                         UpdateCheckboxEnables();
                         break;
                 }
+
+                ThemeHelper.Restyle(this.tableLayoutPanelMask);
             }
+        }
+
+        // The In/Out boxes share the row, so the longest names don't fit in the box itself; let the
+        // open list be as wide as the longest item and show every item without scrolling. Call once
+        // the box is on the dialog, so it's measured with the font it'll actually use.
+        private void FitListToItems(ComboBox combo)
+        {
+            int widest = 0;
+            foreach (object item in combo.Items)
+            {
+                widest = Math.Max(widest, TextRenderer.MeasureText(combo.GetItemText(item), combo.Font).Width);
+            }
+            int arrow = SystemInformation.GetVerticalScrollBarWidthForDpi(DeviceDpi);
+            combo.DropDownWidth = widest + arrow + (int)Math.Ceiling(8 * DpiScale);
+            combo.MaxDropDownItems = Math.Max(1, combo.Items.Count);
         }
 
         void checkbox_Paint(object sender, PaintEventArgs e)
@@ -669,7 +900,7 @@ namespace pyrochild.effects.curvesplus
                 }
             }
             if(!TokenUpdatesSuspended)
-                FinishTokenUpdate();
+                UpdateTokenFromDialog();
         }
 
         void comboInputMode_SelectedIndexChanged(object sender, EventArgs e)
@@ -682,11 +913,16 @@ namespace pyrochild.effects.curvesplus
                 }
             }
             if(!TokenUpdatesSuspended)
-                FinishTokenUpdate();
+                UpdateTokenFromDialog();
         }
 
         private void UpdateCheckboxEnables()
         {
+            if (maskCheckBoxes == null)
+            {
+                return;
+            }
+
             int countChecked = 0;
 
             for (int i = 0; i < maskCheckBoxes.Length; ++i)
@@ -699,7 +935,16 @@ namespace pyrochild.effects.curvesplus
 
             if (maskCheckBoxes.Length == 1)
             {
-                maskCheckBoxes[0].Enabled = false;
+                // A disabled CheckBox ignores ForeColor; in dark mode keep it enabled but non-toggleable.
+                if (ThemeHelper.IsDarkMode)
+                {
+                    maskCheckBoxes[0].Enabled = true;
+                    maskCheckBoxes[0].AutoCheck = false;
+                }
+                else
+                {
+                    maskCheckBoxes[0].Enabled = false;
+                }
             }
         }
 
@@ -734,7 +979,7 @@ namespace pyrochild.effects.curvesplus
                 curveControl.CurveDrawMode = CurveDrawMode;
 
                 if(!TokenUpdatesSuspended)
-                    FinishTokenUpdate();
+                    UpdateTokenFromDialog();
                 curveControl.Invalidate();
 
                 switch (CurveDrawMode)
